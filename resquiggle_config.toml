@@ -1,0 +1,11 @@
+[paths]
+level_table = "/vol/projects/pbohn/tools/kmer_models/rna004/9mer_levels_v1.txt"
+
+[signal_refinement]
+do_rough_rescale = true
+scale_iters = 0
+do_fix_guage = false
+
+[ref_spacing]
+start = 15
+end = 90

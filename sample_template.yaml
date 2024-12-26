@@ -1,0 +1,17 @@
+# Primary control: used for matching. Secondary control: used for validation
+pod5_dir: /path/to/pod5/files
+ref_file: /path/to/reference.fasta
+
+samples:
+  - name: unmod
+    bam_file: /path/to/unmod.bam
+    control: primary
+  - name: mod1 
+    bam_file: /path/to/mod1.bam
+    control: false
+  - name: mod2
+    bam_file: /path/to/mod2.bam 
+    control: false
+  - name: mod_control
+    bam_file: /path/to/mod_control.bam
+    control: secondary
