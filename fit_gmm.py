@@ -19,20 +19,9 @@ import pandas as pd
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 from . import signal_io
-
-
-def calculate_icl(gmm, X):
-    bic = gmm.bic(X)
-    
-    # Calculate entropy term
-    resp = gmm.predict_proba(X)
-    entropy = -np.sum(resp * np.log(resp))
-    
-    icl = bic + entropy
-    return icl
 
 class MultiSampleGMM:
     """
@@ -217,13 +206,13 @@ class NanoporeGMM:
         self.unmodified_gmm = None
         self.modified_gmm = None
         
-    def _select_best_gmm(self, X, max_components, n_init=10):
-        """Select best number of components using BIC"""
-        best_bic = np.inf
-        best_gmm = None
-        best_n = 1
+    
+    def fit_unmodified(self, signals, n_init=10):
+        """Fit GMM to unmodified sample signals"""
+        X = np.array(signals).reshape(-1, 1)
         
-        for n in range(1, max_components + 1):
+        best_bic = np.inf        
+        for n in range(1, self.max_unmodified_components + 1):
             gmm = GaussianMixture(n_components=n, 
                                 n_init=n_init, 
                                 random_state=42,
@@ -233,18 +222,11 @@ class NanoporeGMM:
             
             if bic < best_bic:
                 best_bic = bic
-                best_gmm = gmm
-                best_n = n
-                
-        return best_gmm, best_n
-    
-    def fit_unmodified(self, signals):
-        """Fit GMM to unmodified sample signals"""
-        X = np.array(signals).reshape(-1, 1)
-        self.unmodified_gmm, _ = self._select_best_gmm(X, self.max_unmodified_components)
+                self.unmodified_gmm = gmm
+            
         return self
     
-    def fit_modified_samples(self, signal_list, sample_ids=None):
+    def fit_modified_samples(self, signal_list, sample_ids=None, max_iter:int=100):
         """
         Fit multiple modified samples simultaneously
         
@@ -272,7 +254,8 @@ class NanoporeGMM:
             fixed_weight_ratios=self.unmodified_gmm.weights_,
             n_new_components=0,
             n_samples=len(signal_list),
-            random_state=42
+            random_state=42,
+
         )
         base_gmm.fit(signal_list)
         base_ll = base_gmm.prev_log_likelihood
@@ -284,18 +267,17 @@ class NanoporeGMM:
                 fixed_weight_ratios=self.unmodified_gmm.weights_,
                 n_new_components=n_new,
                 n_samples=len(signal_list),
-                random_state=42
+                random_state=42,
+                max_iter=max_iter
             )
             
             gmm.fit(signal_list)
             
-            # Calculate BIC using pooled data
+            # TODO: Calculate BIC for each sample given components
             X_all = np.concatenate([np.array(X).reshape(-1, 1) for X in signal_list])
             n_params = (n_new * 2 +  # means and vars for new components
                        len(signal_list) * (self.unmodified_gmm.n_components + n_new - 1))  # weights per sample
-            
-
-
+ 
             # Improvement over base model
             ll_improvement = gmm.prev_log_likelihood - base_ll
             if ll_improvement < 0:
@@ -309,7 +291,7 @@ class NanoporeGMM:
             logging.debug(f"New component weights: {gmm.weights_[:, self.unmodified_gmm.n_components:]}")
             
             if bic < best_bic:
-                logging.debug(f"Model updated because current bic is below best: {best_bic}")
+                logging.debug(f"Model updated because current bic is below best: {bic=} {best_bic=}")
                 best_bic = bic
                 best_gmm = gmm
         
@@ -326,7 +308,7 @@ class NanoporeGMM:
             raise ValueError("Must fit modified samples first")
         return self.modified_gmm.n_components > self.unmodified_gmm.n_components
 
-    def get_modification_rates(self, signal_list: list, with_ci=False, n_bootstrap=100, ci_level=0.95):
+    def get_modification_rates(self, signal_list: list, with_ci=False,max_iter:int=100, n_bootstrap=100, ci_level=0.95):
         """
         Get modification rates for all samples, optionally with confidence intervals.
         Returns 0 for all samples if no modification components were needed.
@@ -383,7 +365,8 @@ class NanoporeGMM:
                     fixed_covs=self.unmodified_gmm.covariances_,
                     fixed_weight_ratios=self.unmodified_gmm.weights_,
                     n_new_components=self.modified_gmm.n_components - self.unmodified_gmm.n_components,
-                    n_samples=1
+                    n_samples=1,
+                    max_iter=max_iter,
                 )
                 
                 try:
@@ -391,7 +374,7 @@ class NanoporeGMM:
                     gmm.fit([X_boot])
                     mod_rate = np.sum(gmm.weights_[0, self.unmodified_gmm.n_components:])
                     bootstrap_rates.append(mod_rate)
-                except:
+                except Exception:
                     continue  # Skip failed bootstraps         
             
             # Calculate confidence intervals
@@ -481,6 +464,8 @@ def fit_gmm(
     mod_names: list[str] = None,
     max_unmodified_components: int = 3,
     max_modified_components: int = 2,
+    max_iter: int=100,
+    n_bootstrap: int = 100,
 ) -> FitGMMResult:
     """
     Fit GMM to signals from a single position.
@@ -510,7 +495,8 @@ def fit_gmm(
         signal_list=mod_signals,
         with_ci=True, 
         n_bootstrap=100,
-        ci_level=0.95
+        ci_level=0.95,
+        max_iter=max_iter,
     )
     
     return FitGMMResult(model, rates_with_ci)
