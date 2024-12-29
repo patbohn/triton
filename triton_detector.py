@@ -1,10 +1,8 @@
 import logging
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Union
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
-from scipy.stats import beta
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
@@ -86,7 +84,7 @@ class ModificationAnalyzer:
         features_scaled = self.scaler.transform(features)
         self.gmm.fit(features_scaled)
         if not self.gmm.converged_:
-            logging.warning(f"[fit_control_data] Warning! GMM fit did not converge.")
+            logging.warning("[fit_control_data] Warning! GMM fit did not converge.")
 
         # Store control likelihood statistics for later comparison
         self.control_log_likelihoods = self.gmm.score_samples(features_scaled)
