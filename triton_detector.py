@@ -1,13 +1,12 @@
+import logging
+from typing import Any, Dict, List, Tuple, Union
+
 import numpy as np
+import pandas as pd
+from scipy.optimize import minimize
+from scipy.stats import beta
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
-import pandas as pd
-from typing import List, Dict, Tuple, Any, Union
-from scipy.stats import beta
-from scipy.optimize import minimize
-
-
-import logging
 
 # Basic logging configuration
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s")

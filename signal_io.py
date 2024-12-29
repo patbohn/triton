@@ -1,10 +1,11 @@
 """Util library for sample metrics with control type support."""
 
+from pathlib import Path
+from typing import Dict, List
+
 import h5py
 import numpy as np
 import yaml
-from pathlib import Path
-from typing import Dict, List
 
 
 class Sample:

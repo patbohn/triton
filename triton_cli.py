@@ -1,16 +1,15 @@
 import argparse
+import logging
 from pathlib import Path
-import yaml
+from typing import Dict, List, Tuple
+
+import h5py
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
-import h5py
-from tqdm import tqdm
-
-from triton_detector import ModificationAnalyzer
+import yaml
 from signal_io import Sample, load
-
-import logging
+from tqdm import tqdm
+from triton_detector import ModificationAnalyzer
 
 # Basic logging configuration
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s")
@@ -93,7 +92,7 @@ def get_position_data(
     df = clean_up_df(df, drop_short_dwell)
     if len(df) < before_cleanup:
         logging.info(
-            f"[get_position_data] {sample} at {postition}: Filtered {before_cleanup - len(df)} samples."
+            f"[get_position_data] {sample} at {position}: Filtered {before_cleanup - len(df)} samples."
         )
     return df
 
@@ -234,7 +233,7 @@ def main():
     samples = load_samples(args.input_files)
 
     # Run analysis for all positions
-    logging.info(f"[main] Running mod detection analysis.")
+    logging.info("[main] Running mod detection analysis.")
     results = analyze_all_positions(
         samples,
         control_map=control_map,
@@ -243,7 +242,7 @@ def main():
     )
 
     # Save results to both files
-    logging.info(f"[main] Storing results.")
+    logging.info("[main] Storing results.")
     save_results(
         results,
         stats_output=args.stats_output,
