@@ -10,6 +10,14 @@ from tqdm import tqdm
 from triton_detector import ModificationAnalyzer
 from signal_io import Sample, load
 
+import logging
+
+# Basic logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)-8s | %(message)s'
+)
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Analyze modifications in signal data using control samples.",
@@ -38,6 +46,7 @@ def load_samples(file_paths: List[Path]) -> Dict[str, Sample]:
         file_samples = load(file_path)
         for sample in file_samples:
             samples[sample.name] = sample
+    logging.info(f"[load_samples] Loaded {len(samples)} samples in total from files.")
     return samples
 
 
@@ -47,11 +56,16 @@ def clean_up_df(df: pd.DataFrame, drop_short_dwell: bool = False) -> pd.DataFram
 
 def get_position_data(sample: Sample, position: int, drop_short_dwell: bool) -> pd.DataFrame:
     """Extract metrics for a specific position from a Sample."""
-    return clean_up_df(pd.DataFrame({
+    df = pd.DataFrame({
         'signal': sample.metrics['trimmean'][:, position],
         'dwell_time': sample.metrics['dwell'][:, position],
         'std_dev': sample.metrics['trimsd'][:, position]
-    }), drop_short_dwell)
+    })
+    before_cleanup = len(df)
+    df = clean_up_df(df, drop_short_dwell)
+    if len(df) < before_cleanup:
+        logging.info(f"[get_position_data] {sample} at {postition}: Filtered {before_cleanup - len(df)} samples.")
+    return df
 
 def analyze_modifications_at_position(
     samples: Dict[str, Sample],
@@ -83,12 +97,14 @@ def analyze_all_positions(
     # Get number of positions from first sample
     first_sample = next(iter(samples.values()))
     n_positions = next(iter(first_sample.metrics.values())).shape[1]
-    
+    logging.info(f"[analyze_all_positions] Processing {n_positions} positions.")
+
     # Initialize results structure
     results = {sample_name: [] for sample_name in control_map.keys()}
     
     # Analyze each position
     for pos in tqdm(range(n_positions), total = n_positions):
+        logging.debug(f"[analyze_all_positions] Index position {pos}.")
         pos_results = analyze_modifications_at_position(
             samples,
             control_map,
@@ -177,11 +193,14 @@ def main():
     # Load control mapping
     with open(args.control_map) as f:
         control_map = yaml.safe_load(f)
+    logging.info(f"[main] Found {len(control_map)} samples in control_map file.")
     
     # Load all samples
+    logging.info(f"[main] Loading samples from input files: {args.input_files}.")
     samples = load_samples(args.input_files)
     
     # Run analysis for all positions
+    logging.info(f"[main] Running mod detection analysis.")
     results = analyze_all_positions(
         samples,
         control_map=control_map,
@@ -190,6 +209,7 @@ def main():
     )
     
     # Save results to both files
+    logging.info(f"[main] Storing results.")
     save_results(
         results, 
         stats_output=args.stats_output,

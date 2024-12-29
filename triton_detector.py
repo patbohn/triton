@@ -7,6 +7,14 @@ from scipy.stats import beta
 from scipy.optimize import minimize
 
 
+import logging
+
+# Basic logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)-8s | %(message)s'
+)
+
 def ttest(signals1, signals2) -> Dict[str, float]:
     from scipy.stats import ttest_ind
 
@@ -39,6 +47,7 @@ class ModificationAnalyzer:
     ) -> np.ndarray:
         """Prepare and normalize 3D feature space."""
         features = np.vstack([signal, np.log(dwell_time), std_dev]).T
+        features[~np.isfinite(features)] = np.nan
         return features
 
     def fit_control_data(
@@ -55,7 +64,11 @@ class ModificationAnalyzer:
             Number of samples to use for fitting. If None, use all data.
         """
         # drop na values
+        all_samples = len(control_data)
         control_data = control_data.dropna()
+        dropped_samples = all_samples-len(control_data)
+        if dropped_samples > 0:
+            logging.debug(f"[fit_control_data] Dropped {dropped_samples} NA samples, {len(control_data)} remaining.")
 
         # Prepare features from control data
         features = self.prepare_features(
@@ -64,7 +77,7 @@ class ModificationAnalyzer:
             control_data["std_dev"].values,
         )
 
-        # Sample if requested
+        # Downsample if requested
         if n_samples is not None and n_samples < len(features):
             indices = np.random.choice(len(features), n_samples, replace=False)
             features = features[indices]
@@ -73,6 +86,10 @@ class ModificationAnalyzer:
         self.scaler.fit(features)
         features_scaled = self.scaler.transform(features)
         self.gmm.fit(features_scaled)
+        if not self.gmm.converged_:
+            logging.warning(
+                f"[fit_control_data] Warning! GMM fit did not converge."
+            )
 
         # Store control likelihood statistics for later comparison
         self.control_log_likelihoods = self.gmm.score_samples(features_scaled)
@@ -102,6 +119,8 @@ class ModificationAnalyzer:
 
         # Find non-NaN indices
         valid_mask = ~np.isnan(features_scaled).any(axis=1)
+        if sum(valid_mask) < len(features_scaled[0]):
+            logging.debug(f"[get_modification_probabilities] Dropped {sum(~valid_mask)} samples before prediction.")
 
         log_likelihoods = self.gmm.score_samples(features_scaled[valid_mask])
         
@@ -180,7 +199,7 @@ class ModificationAnalyzer:
         for sample_name, control_name in control_map.items():
             if sample_name not in sample_dict or control_name not in sample_dict:
                 continue
-
+            logging.debug(f"[analyze_samples] Sample {sample_name} compared against {control_name}.")
             # Fit model on control data
             control_data = sample_dict[control_name]
             self.fit_control_data(control_data)
