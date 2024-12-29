@@ -54,6 +54,9 @@ class ModificationAnalyzer:
         n_samples : int, optional
             Number of samples to use for fitting. If None, use all data.
         """
+        # drop na values
+        control_data = control_data.dropna()
+
         # Prepare features from control data
         features = self.prepare_features(
             control_data["signal"].values,
@@ -96,9 +99,15 @@ class ModificationAnalyzer:
         # Get posterior probabilities from GMM
         # The control GMM represents unmodified state, so modification probability
         # is 1 minus the probability of being in that state
-        log_likelihoods = self.gmm.score_samples(features_scaled)
 
-        p_values = np.searchsorted(self.sorted_control_log_ll, log_likelihoods) / len(
+        # Find non-NaN indices
+        valid_mask = ~np.isnan(features_scaled).any(axis=1)
+
+        log_likelihoods = self.gmm.score_samples(features_scaled[valid_mask])
+        
+        p_values = np.full(features_scaled.shape[0], np.nan)
+
+        p_values[valid_mask] = np.searchsorted(self.sorted_control_log_ll, log_likelihoods) / len(
             self.control_log_likelihoods
         )
 
@@ -131,11 +140,11 @@ class ModificationAnalyzer:
             # If all reads unmodified, mean would be 0.5
             # If all reads modified, mean would approach 0
             # Scale the deviation to estimate modification rate
-            mean_pval = np.mean(p_values)
+            mean_pval = np.nanmean(p_values)
             return 2 * (0.5 - mean_pval)  # scales to [0,1]
 
         elif method == "threshold":
-            return np.mean(p_values < threshold)
+            return np.mean(p_values[~np.isnan(p_values)] < threshold)
 
         else:
             raise ValueError(f"Unknown method: {method}")
@@ -210,7 +219,7 @@ class ModificationAnalyzer:
                 "per_read_p_values": p_values,
                 "mod_rates": mod_rates,
                 "group_statistics": group_statistics,
-                "num_observations": len(sample_data),
+                "num_observations": sum(~np.isnan(sample_data["signal"])),
                 "control_name": control_name,
             }
 
@@ -221,7 +230,6 @@ def analyze_modifications(
     samples: Dict[str, pd.DataFrame],
     control_map: Dict[str, str],
     n_components: int = 3,
-    method: str = "likelihood",
 ) -> Dict[str, Dict]:
     """
     Analyze modification probabilities across multiple samples.
@@ -246,7 +254,7 @@ def analyze_modifications(
     analyzer = ModificationAnalyzer(n_components=n_components)
 
     # Analyze each sample relative to its specific control
-    results = analyzer.analyze_samples(samples, control_map, method=method)
+    results = analyzer.analyze_samples(samples, control_map)
 
     return results
 

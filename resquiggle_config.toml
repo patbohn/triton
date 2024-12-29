@@ -8,4 +8,4 @@ do_fix_guage = true
 
 [ref_spacing]
 start = 15
-end = 90
+end = 10

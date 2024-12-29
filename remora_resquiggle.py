@@ -1,14 +1,19 @@
 """
 This is to extract per read per position signal information as resquiggled by remora. 
 
-For each read and each position, stores dwell time, trimsd and trimmean signal
+For each read and each position, stores dwell time, trimsd and trimmean signal in a hdf5 object. 
 
 Usage: 
 python script.py \
     --pod5-dir /path/to/pod5/files \
-    --control-bam /path/to/control.bam \
-    --mod-bams /path/to/mod1.bam /path/to/mod2.bam \
-    --ref-file /path/to/reference.fasta
+    --ref-file /path/to/reference.fasta \
+    --sample-bam-files /path/to/sample1.bam /path/to/sample2.bam \
+    --sample-names sample1 sample2 \
+    --config /path/to/config.toml \
+    --signal-outfile /path/to/output.hdf5 \
+    [--start-spacing START_SPACING] \
+    [--end-spacing END_SPACING] \
+    [--metrics METRICS]
 """
 
 from remora import io, refine_signal_map
@@ -19,35 +24,33 @@ from Bio import SeqIO
 import argparse
 import toml
 import yaml
-from typing import Optional
+from typing import Optional, List, Dict
 
-from . import signal_io
+import signal_io
+from signal_io import Sample
 
 
 def get_ref_region(
     ref_file: Path,
+    config: dict = None,
     start_spacing: int | None = None,
     end_spacing: int | None = None,
-    config: dict = None,
 ) -> dict[np.array]:
     ref = SeqIO.read(ref_file, "fasta")
     return io.RefRegion(
         ctg=ref.id, strand="+", 
-        start=len(ref) + (start_spacing or config['ref_spacing']['start']), 
+        start=(start_spacing or config['ref_spacing']['start']), 
         end=len(ref) - (end_spacing or config['ref_spacing']['end']),
     )
-
 
 
 def extract_signal(
     pod5_dir: Path, 
     sample_info: list[dict],
-    ref_file: Path,
+    ref_reg,
     config: dict,
-    start_spacing: int | None = None,
-    end_spacing: int | None = None, 
     metrics: str = "dwell_trimmean_trimsd",
-) -> dict[np.array]:
+) -> List[Dict[str, np.ndarray]]:
     sig_map_refiner = refine_signal_map.SigMapRefiner(
         kmer_model_filename=config['paths']['level_table'],
         do_rough_rescale=config['signal_refinement']['do_rough_rescale'],
@@ -55,7 +58,7 @@ def extract_signal(
         do_fix_guage=config['signal_refinement']['do_fix_guage'],
     )
 
-    ref_reg = get_ref_region(ref_file, start_spacing, end_spacing)
+    
     pod5_dr = pod5.DatasetReader(pod5_dir)
     
     bam_handlers = [
@@ -75,9 +78,11 @@ def extract_signal(
     return samples_metrics
 
 
-
 def main(
-    sample_info: Path,
+    pod5_dir: Path,
+    ref_file: Path,
+    sample_bam_files: list[Path], 
+    sample_names: list[str],
     config_file: Path,
     output_path: Path,
     start_spacing: Optional[int] = None,
@@ -88,47 +93,53 @@ def main(
     Main function that can be called either from command line or as a module.
     
     Returns:
-        tuple: (samples_metrics, return_code)
+        int: Return code (0 for success, 1 for error)
     """
     try:
-        with open(sample_info) as f:
-            sample_info = yaml.safe_load(f)
         config = toml.load(config_file)
     except Exception as e:
         print(f"Error loading configuration: {e}")
         return 1
     
-    try:
-        samples_metrics = extract_signal(
-            pod5_dir=sample_info['pod5_dir'],
-            sample_info=sample_info['samples'],
-            ref_file=Path(sample_info['ref_file']),
-            config=config,
-            start_spacing=start_spacing,
-            end_spacing=end_spacing,
+    if len(sample_names) != len(sample_bam_files):
+        raise ValueError("Length of sample names and bam files does not match!")
+    
+    # Create sample info list
+    sample_info = [
+        {'name': name, 'bam_file': str(bam_file)}
+        for name, bam_file in zip(sample_names, sample_bam_files)
+    ]
+    
+    ref_reg = get_ref_region(ref_file, config, start_spacing, end_spacing)
+
+    # Extract raw metrics
+    samples_metrics = extract_signal(
+        pod5_dir=pod5_dir,
+        sample_info=sample_info,
+        ref_reg=ref_reg,
+        config=config,
+        metrics=metrics,
+    )
+
+    # Create Sample objects
+    samples = [
+        Sample(
+            name=name,
             metrics=metrics,
+            config=config,
+            ref={
+                'ctg': ref_reg.ctg,
+                'start': ref_reg.coord_range[0],
+                'end': ref_reg.coord_range[-1],
+            }
         )
-        
-        sample_names = [s['name'] for s in sample_info['samples']]
-        control_flags = [
-            s['control'] == 'primary' or s['control'] == 'secondary'
-            for s in sample_info['samples']
-        ]
-        
-        print(f"Successfully processed {len(samples_metrics)} samples")
-        signal_io.save_metrics(
-            samples_metrics,
-            output_path,
-            sample_names=sample_names,
-            control_flags=control_flags
-        )
+        for name, metrics in zip(sample_names, samples_metrics)
+    ]
 
-        return 0
+    print(f"Successfully processed {len(samples)} samples. Saving to {output_path}")
+    signal_io.save_metrics(samples, output_path)
+    return 0
         
-    except Exception as e:
-        print(f"Error processing signals: {e}")
-        return None, 1
-
 
 
 def parse_args():
@@ -137,27 +148,36 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
-    parser.add_argument("--sample-yaml", type=Path, required=True,
-                       help="YAML samples file")
-    parser.add_argument("--config", type=Path, default="config.toml",
+    parser.add_argument("--pod5-dir", type=Path, required=True,
+                       help="Location of pod5 dir/file")
+    parser.add_argument("--ref-file", type=Path, required=True,
+                       help="Location of reference file")
+    parser.add_argument("--sample-bam-files", type=Path, nargs='+', required=True,
+                       help="Location of bam files")
+    parser.add_argument("--sample-names", type=str, nargs='+', required=True,
+                       help="Sample names")
+    parser.add_argument("--config", type=Path, default="config.toml", required=True,
                        help="Path to TOML configuration file")
     parser.add_argument("--signal-outfile", type=Path, default="signals.hdf5",
                        help="Path to store resquiggled signal in")
-    parser.add_argument("--start-spacing", type=int,
+    parser.add_argument("--start-spacing", type=int, default=0,
                        help="Override start spacing from config")
-    parser.add_argument("--end-spacing", type=int,
+    parser.add_argument("--end-spacing", type=int, default=0,
                        help="Override end spacing from config")
     parser.add_argument("--metrics", type=str, default="dwell_trimmean_trimsd",
                        help="Metrics to compute (comma-separated)")
-    
+
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     
-    _, return_code = main(
-        sample_info=args.sample_yaml,
+    return_code = main(
+        pod5_dir=args.pod5_dir,
+        ref_file=args.ref_file,
+        sample_bam_files=args.sample_bam_files,
+        sample_names=args.sample_names,
         config_file=args.config,
         output_path=args.signal_outfile,
         start_spacing=args.start_spacing,

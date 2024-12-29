@@ -1,88 +1,91 @@
 """Util library for sample metrics with control type support."""
 
-from enum import Enum
 import h5py
 import numpy as np
+import yaml
 from pathlib import Path
-from typing import Dict, Iterator, List, Tuple
+from typing import Dict, List
 
-class ControlType(Enum):
-    PRIMARY = "primary"
-    SECONDARY = "secondary"
-    NONE = "none"
 
 class Sample:
-    def __init__(self, name: str, metrics: Dict[str, np.ndarray], control: str):
+    def __init__(self, name: str, metrics: Dict[str, np.ndarray], config: dict, ref: dict):
         self.name = name
         self.metrics = metrics
-        self.control = ControlType(control)
+        self.config = config
+        self.ref = ref
 
-    @property
-    def is_primary_control(self) -> bool:
-        return self.control == ControlType.PRIMARY
-        
-    @property
-    def is_secondary_control(self) -> bool:
-        return self.control == ControlType.SECONDARY
+    def __repr__(self):
+        return f"""Sample Name: {self.name}
+Metrics: {list(self.metrics.keys())} (num reads: {len(next(iter(self.metrics.values())))}, length: {len(next(iter(self.metrics.values()))[0])})
+Reference: {self.ref}
 
-    def get_metrics_at(self, idx: int) -> Dict[str, np.ndarray]:
-        return {name: metric[idx] for name, metric in self.metrics.items() if name != "Position"}
+Signal Refinement Config:
+{self.config['signal_refinement']}
+"""
 
-class SampleMetrics:
-    def __init__(self, samples: List[Sample] = None):
-        self.samples = samples or []
-        self._validate_controls()
-        self._organize_samples()
-        
-    def _validate_controls(self):
-        primary_controls = sum(1 for s in self.samples if s.is_primary_control)
-        if primary_controls != 1:
-            raise ValueError(f"Expected exactly one primary control, found {primary_controls}")
-            
-        secondary_controls = sum(1 for s in self.samples if s.is_secondary_control)
-        if secondary_controls > 1:
-            raise ValueError(f"Expected at most one secondary control, found {secondary_controls}")
-
-    def _organize_samples(self):
-        self.primary_control = [(s, s.metrics) for s in self.samples if s.is_primary_control]
-        self.modified_samples = [(s, s.metrics) for s in self.samples if not s.is_primary_control and not s.is_secondary_control]
-        self.secondary_control = [(s, s.metrics) for s in self.samples if s.is_secondary_control]
+def save_metrics(samples: List[Sample], output_path: Path) -> None:
+    """
+    Store sample metrics and their configs to an HDF5 file.
     
-    def iter_positions(self) -> Iterator[Tuple[int, Dict]]:
-        """Iterate through positions, returning structured data for GMM fitting"""
-        if not self.samples:
-            return
-            
-        first_sample = self.samples[0]
-        positions = first_sample.metrics["Position"]
-        n_positions = len(positions)
+    Args:
+        samples: List of Sample objects containing metrics and configs
+        output_path: Path to save the HDF5 file
+    """
+    if not samples:
+        raise ValueError("No samples provided")
+
+    with h5py.File(output_path, 'w') as f:
+        # Store metadata
+        f.attrs['sample_names'] = [sample.name for sample in samples]
         
-        for idx in range(n_positions):
-            ref_pos = positions[idx]
-            yield ref_pos, {
-                "primary_control": [(s, s.get_metrics_at(idx)) for s, _ in self.primary_control],
-                "modified_samples": [(s, s.get_metrics_at(idx)) for s, _ in self.modified_samples],
-                "secondary_control": [(s, s.get_metrics_at(idx)) for s, _ in self.secondary_control]
-            }
+        # Store samples
+        for sample in samples:
+            group = f.create_group(sample.name)
+            
+            # Store metrics
+            metrics_group = group.create_group('metrics')
+            for metric_name, metric_data in sample.metrics.items():
+                metrics_group.create_dataset(
+                    metric_name,
+                    data=metric_data,
+                    compression="gzip",
+                    compression_opts=9
+                )
+            
+            # Store config as YAML string
+            config_str = yaml.dump(sample.config)
+            group.attrs['config'] = config_str
+            ref_str = yaml.dump(sample.ref)
+            group.attrs['ref'] = ref_str
+
+
+def load(file_path: Path) -> List[Sample]:
+    """Load sample metrics from an HDF5 file."""
+    samples = []
+    with h5py.File(file_path, 'r') as f:
+        sample_names = f.attrs['sample_names']
+        
+        for name in sample_names:
+            # Load metrics
+            metrics = {}
+            metrics_group = f[name]['metrics']
+            for metric_name in metrics_group.keys():
+                metrics[metric_name] = metrics_group[metric_name][:]
+            
+            # Load config
+            config_str = f[name].attrs['config']
+            config = yaml.safe_load(config_str)
+            ref_str = f[name].attrs['ref']
+            ref = yaml.safe_load(ref_str)
+            
+            samples.append(Sample(
+                name=name,
+                metrics=metrics,
+                config=config,
+                ref=ref,
+            ))
     
-    @classmethod
-    def load(cls, file_path: Path) -> 'SampleMetrics':
-        samples = []
-        with h5py.File(file_path, 'r') as f:
-            sample_names = f.attrs['sample_names']
-            control_types = f.attrs['control_types']
-            
-            for idx, name in enumerate(sample_names):
-                metrics = {}
-                group = f[name]
-                
-                for metric_name in group.keys():
-                    metrics[metric_name] = group[metric_name][:]
-                
-                samples.append(Sample(
-                    name=name,
-                    metrics=metrics,
-                    control=control_types[idx]
-                ))
-        
-        return cls(samples)
+    return samples
+
+
+
