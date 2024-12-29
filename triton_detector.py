@@ -10,10 +10,8 @@ from scipy.optimize import minimize
 import logging
 
 # Basic logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)-8s | %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s")
+
 
 def ttest(signals1, signals2) -> Dict[str, float]:
     from scipy.stats import ttest_ind
@@ -66,9 +64,11 @@ class ModificationAnalyzer:
         # drop na values
         all_samples = len(control_data)
         control_data = control_data.dropna()
-        dropped_samples = all_samples-len(control_data)
+        dropped_samples = all_samples - len(control_data)
         if dropped_samples > 0:
-            logging.debug(f"[fit_control_data] Dropped {dropped_samples} NA samples, {len(control_data)} remaining.")
+            logging.debug(
+                f"[fit_control_data] Dropped {dropped_samples} NA samples, {len(control_data)} remaining."
+            )
 
         # Prepare features from control data
         features = self.prepare_features(
@@ -87,14 +87,11 @@ class ModificationAnalyzer:
         features_scaled = self.scaler.transform(features)
         self.gmm.fit(features_scaled)
         if not self.gmm.converged_:
-            logging.warning(
-                f"[fit_control_data] Warning! GMM fit did not converge."
-            )
+            logging.warning(f"[fit_control_data] Warning! GMM fit did not converge.")
 
         # Store control likelihood statistics for later comparison
         self.control_log_likelihoods = self.gmm.score_samples(features_scaled)
         self.sorted_control_log_ll = np.sort(self.control_log_likelihoods)
-
 
     def get_modification_probabilities(self, features: np.ndarray) -> np.ndarray:
         """
@@ -120,15 +117,17 @@ class ModificationAnalyzer:
         # Find non-NaN indices
         valid_mask = ~np.isnan(features_scaled).any(axis=1)
         if sum(valid_mask) < len(features_scaled[0]):
-            logging.debug(f"[get_modification_probabilities] Dropped {sum(~valid_mask)} samples before prediction.")
+            logging.debug(
+                f"[get_modification_probabilities] Dropped {sum(~valid_mask)} samples before prediction."
+            )
 
         log_likelihoods = self.gmm.score_samples(features_scaled[valid_mask])
-        
+
         p_values = np.full(features_scaled.shape[0], np.nan)
 
-        p_values[valid_mask] = np.searchsorted(self.sorted_control_log_ll, log_likelihoods) / len(
-            self.control_log_likelihoods
-        )
+        p_values[valid_mask] = np.searchsorted(
+            self.sorted_control_log_ll, log_likelihoods
+        ) / len(self.control_log_likelihoods)
 
         return p_values
 
@@ -199,7 +198,9 @@ class ModificationAnalyzer:
         for sample_name, control_name in control_map.items():
             if sample_name not in sample_dict or control_name not in sample_dict:
                 continue
-            logging.debug(f"[analyze_samples] Sample {sample_name} compared against {control_name}.")
+            logging.debug(
+                f"[analyze_samples] Sample {sample_name} compared against {control_name}."
+            )
             # Fit model on control data
             control_data = sample_dict[control_name]
             self.fit_control_data(control_data)
