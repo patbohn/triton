@@ -1,6 +1,6 @@
 # Modification (Outlier) detection with Gaussian Mixture Models
 
-This is a tool to detect outliers of a multidimensional Gaussian Mixture Model. 
+Triton a tool to detect outliers of a multidimensional Gaussian Mixture Model (named because of the 3 dimensions signal mean, standard deviation and dwell time). 
 
 It is targeted towards Nanopore sequencing. Specifically, it contains a wrapper around remora for resquiggling in addition to a custom storage format to store resquiggled signals that makes it relatively efficient. Then, given a control and some potentially modified sample, for each position a GMM is fit based on the control observations. Based on how likely the potentially modified observation is within this model, we can give it a probability of being part of the same distribution (in other words, of it being unmodified, i.e. a p value). 
 
